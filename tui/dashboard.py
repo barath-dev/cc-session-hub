@@ -10,7 +10,7 @@ from textual.containers import Container, Vertical
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.suggester import Suggester
-from textual.widgets import DataTable, Footer, Header, Input, Static
+from textual.widgets import DataTable, Footer, Header, Input, OptionList, Static
 
 HUB_HTTP = os.environ.get("CC_HUB_HTTP", "http://127.0.0.1:8765")
 HUB_WS = os.environ.get("CC_HUB_WS", "ws://127.0.0.1:8765/ws")
@@ -131,37 +131,47 @@ class ConfirmScreen(ModalScreen[bool]):
             self.dismiss(False)
 
 
+DIR_MATCH_LIMIT = 20
+
+
+def list_matching_dirs(value: str) -> tuple[str, list[str]]:
+    """For a partially-typed path, returns (prefix-to-keep, [matching subdirectory
+    names]) - the part of `value` before the final path segment, and every real
+    subdirectory of that location whose name starts with what's typed so far."""
+    if not value:
+        return "", []
+
+    expanded = os.path.expanduser(value)
+    if expanded.endswith(os.sep):
+        fs_dir, typed = expanded, ""
+    else:
+        fs_dir, typed = os.path.split(expanded)
+        fs_dir = fs_dir or "."
+
+    try:
+        entries = sorted(os.listdir(fs_dir))
+    except OSError:
+        return "", []
+
+    matches = [
+        e for e in entries
+        if e.startswith(typed) and os.path.isdir(os.path.join(fs_dir, e))
+    ]
+    original_prefix = value if not typed else value[: len(value) - len(typed)]
+    return original_prefix, matches[:DIR_MATCH_LIMIT]
+
+
 class PathSuggester(Suggester):
-    """Completes directory paths as you type, filesystem-backed, dirs only."""
+    """Ghost inline completion (best match) as you type, filesystem-backed."""
 
     def __init__(self):
         super().__init__(use_cache=False, case_sensitive=True)
 
     async def get_suggestion(self, value: str) -> str | None:
-        if not value:
-            return None
-
-        expanded = os.path.expanduser(value)
-        if expanded.endswith(os.sep):
-            dir_part, prefix = expanded, ""
-        else:
-            dir_part, prefix = os.path.split(expanded)
-            dir_part = dir_part or "."
-
-        try:
-            entries = sorted(os.listdir(dir_part))
-        except OSError:
-            return None
-
-        matches = [
-            e for e in entries
-            if e.startswith(prefix) and os.path.isdir(os.path.join(dir_part, e))
-        ]
+        prefix, matches = list_matching_dirs(value)
         if not matches:
             return None
-
-        original_prefix = value if not prefix else value[: len(value) - len(prefix)]
-        return original_prefix + matches[0] + os.sep
+        return prefix + matches[0] + os.sep
 
 
 class NewSessionScreen(ModalScreen[str | None]):
@@ -177,6 +187,11 @@ class NewSessionScreen(ModalScreen[str | None]):
         border: solid $accent;
         padding: 1 2;
         background: $panel;
+    }
+    #dir-options {
+        max-height: 8;
+        margin-top: 1;
+        border: solid $accent;
     }
     #new-error {
         color: $error;
@@ -197,11 +212,28 @@ class NewSessionScreen(ModalScreen[str | None]):
         with Container(id="new-box"):
             yield Static(f"New session for [b]{self.account}[/b] — directory:")
             yield Input(value=self.default_dir, id="dir-input", suggester=PathSuggester())
+            yield OptionList(id="dir-options")
             yield Static("", id="new-error")
-            yield Static("Enter to start, → to accept suggestion, Esc to cancel", id="new-hint")
+            yield Static("Enter to start, ↓ to browse matches, Esc to cancel", id="new-hint")
 
     def on_mount(self) -> None:
+        self.query_one("#dir-options", OptionList).display = False
         self.query_one("#dir-input", Input).focus()
+
+    def _refresh_dropdown(self, value: str) -> None:
+        _, matches = list_matching_dirs(value)
+        options = self.query_one("#dir-options", OptionList)
+        options.clear_options()
+        if matches:
+            options.add_options(matches)
+            options.display = True
+        else:
+            options.display = False
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "dir-input":
+            self.query_one("#new-error", Static).update("")
+            self._refresh_dropdown(event.value)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         path = os.path.expanduser(event.value.strip())
@@ -210,9 +242,31 @@ class NewSessionScreen(ModalScreen[str | None]):
             return
         self.dismiss(os.path.abspath(path))
 
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id != "dir-options":
+            return
+        dir_input = self.query_one("#dir-input", Input)
+        prefix, _ = list_matching_dirs(dir_input.value)
+        new_value = prefix + str(event.option.prompt) + os.sep
+        dir_input.value = new_value
+        dir_input.cursor_position = len(new_value)
+        dir_input.focus()
+        self._refresh_dropdown(new_value)
+
     def on_key(self, event) -> None:
+        options = self.query_one("#dir-options", OptionList)
         if event.key == "escape":
-            self.dismiss(None)
+            if self.focused is options:
+                options.display = False
+                self.query_one("#dir-input", Input).focus()
+            else:
+                self.dismiss(None)
+            event.stop()
+        elif event.key == "down" and isinstance(self.focused, Input) and options.display:
+            options.focus()
+            if options.highlighted is None and options.option_count:
+                options.highlighted = 0
+            event.stop()
 
 
 class Dashboard(App):

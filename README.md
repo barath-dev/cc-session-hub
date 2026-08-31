@@ -112,6 +112,12 @@ sessions table instead, the account of the highlighted session — and asks for 
 `o`, just without `--resume`: a fresh `claude` process starts in that directory under that
 account's `$CLAUDE_CONFIG_DIR`.
 
+The directory field autocompletes against the real filesystem as you type (directories
+only): a dim inline suggestion appears for the best match — accept it with `→`/`End` — and
+a dropdown of every matching subdirectory opens below the field. Press `↓` to move into the
+dropdown, `↑`/`↓` to browse it, `Enter` to pick one (fills the field and returns focus to
+it), or `Esc` to close the dropdown without picking anything.
+
 Or use `./open.sh`, which starts the hub automatically if it isn't already running and
 then opens the dashboard — handy to alias (e.g. `alias cc-dashboard="~/tools/cc-session-hub/open.sh"`)
 so you can just type one command.
