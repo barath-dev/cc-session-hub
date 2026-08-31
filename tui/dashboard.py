@@ -214,7 +214,7 @@ class NewSessionScreen(ModalScreen[str | None]):
             yield Input(value=self.default_dir, id="dir-input", suggester=PathSuggester())
             yield OptionList(id="dir-options")
             yield Static("", id="new-error")
-            yield Static("Enter to start, ↓ to browse matches, Esc to cancel", id="new-hint")
+            yield Static("Enter to start, Tab to complete, ↓ to browse matches, Esc to cancel", id="new-hint")
 
     def on_mount(self) -> None:
         self.query_one("#dir-options", OptionList).display = False
@@ -267,6 +267,14 @@ class NewSessionScreen(ModalScreen[str | None]):
             if options.highlighted is None and options.option_count:
                 options.highlighted = 0
             event.stop()
+        elif event.key == "tab" and isinstance(self.focused, Input):
+            suggestion = self.focused._suggestion
+            if suggestion:
+                self.focused.value = suggestion
+                self.focused.cursor_position = len(suggestion)
+                self._refresh_dropdown(suggestion)
+            event.stop()
+            event.prevent_default()
 
 
 class Dashboard(App):
