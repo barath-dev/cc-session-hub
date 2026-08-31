@@ -96,20 +96,20 @@ is low-frequency).
 .venv/bin/python tui/dashboard.py
 ```
 
-Press `q` to quit. Press `o` to **open** the highlighted session: the dashboard exits and
-the same terminal is redirected into `claude --resume <session_id>` for that session, `cd`'d
-into its directory and using its original account's `$CLAUDE_CONFIG_DIR` — it fully replaces
-the dashboard process, so the terminal that was running the TUI becomes that Claude Code
-session. If the session's last known state isn't `ended` (it might still be running live in
-another window), you'll get a confirmation prompt first — `y` to proceed anyway, `n`/Esc to
-cancel — since a second process reading/appending the same transcript can conflict with one
-that's still active.
+Press `q` to quit. Press `o` to **open** the highlighted session: a new Terminal.app window
+opens running `claude --resume <session_id>` for that session, `cd`'d into its directory and
+using its original account's `$CLAUDE_CONFIG_DIR` — the dashboard keeps running in its own
+window untouched. If the session's last known state isn't `ended` (it might still be running
+live in another window), you'll get a confirmation prompt first — `y` to proceed anyway,
+`n`/Esc to cancel — since a second process reading/appending the same transcript can conflict
+with one that's still active. (macOS Terminal.app only for now — other terminal apps aren't
+scriptable the same way.)
 
 Press `n` to start a **new** session for an account instead of resuming an old one. It acts
 on whichever account is highlighted in the top (usage) panel — or, if you're focused on the
 sessions table instead, the account of the highlighted session — and asks for a directory
-(defaults to wherever you launched the dashboard from). Same terminal-takeover mechanism as
-`o`, just without `--resume`: a fresh `claude` process starts in that directory under that
+(defaults to wherever you launched the dashboard from). Same new-window mechanism as `o`,
+just without `--resume`: a fresh `claude` process starts in that directory under that
 account's `$CLAUDE_CONFIG_DIR`.
 
 The directory field autocompletes against the real filesystem as you type (directories

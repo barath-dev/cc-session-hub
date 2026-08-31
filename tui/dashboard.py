@@ -2,6 +2,9 @@
 """Textual TUI for cc-session-hub: live view of all reporting Claude Code sessions."""
 
 import os
+import shlex
+import subprocess
+import sys
 from datetime import datetime, timezone
 
 import aiohttp
@@ -93,6 +96,35 @@ def format_resets_in(iso_ts: str | None) -> str:
     if hours:
         return f"in {hours}h{minutes}m"
     return f"in {minutes}m"
+
+
+def _applescript_escape(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def spawn_new_terminal_window(cwd: str, config_dir: str, session_id: str | None) -> str | None:
+    """Opens a new Terminal.app window running claude (fresh, or --resume
+    session_id) in cwd under config_dir. Returns an error message, or None on
+    success. Doesn't touch this process - the dashboard keeps running."""
+    if sys.platform != "darwin":
+        return "New-window launching only supports macOS Terminal.app right now"
+
+    claude_cmd = "claude"
+    if config_dir:
+        claude_cmd = f"CLAUDE_CONFIG_DIR={shlex.quote(config_dir)} {claude_cmd}"
+    if session_id:
+        claude_cmd += f" --resume {shlex.quote(session_id)}"
+
+    shell_cmd = f"cd {shlex.quote(cwd)} && {claude_cmd}"
+    script = f'tell application "Terminal" to do script "{_applescript_escape(shell_cmd)}"'
+
+    try:
+        result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=5)
+    except Exception as e:
+        return str(e)
+    if result.returncode != 0:
+        return result.stderr.strip() or "osascript failed"
+    return None
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -305,7 +337,6 @@ class Dashboard(App):
         self.usage_row_keys: dict[str, object] = {}
         self.selected_session_id: str | None = None
         self.selected_account: str | None = None
-        self.open_request: dict | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -474,12 +505,11 @@ class Dashboard(App):
             return
 
         def proceed() -> None:
-            self.open_request = {
-                "session_id": session_id,
-                "cwd": row["cwd"],
-                "config_dir": row.get("config_dir") or "",
-            }
-            self.exit()
+            error = spawn_new_terminal_window(row["cwd"], row.get("config_dir") or "", session_id)
+            if error:
+                self.notify(f"Couldn't open a new window: {error}", severity="error")
+            else:
+                self.notify(f"Opened {row.get('project') or session_id} in a new Terminal window")
 
         if row.get("state") != "ended":
             def handle_result(confirmed: bool | None) -> None:
@@ -504,45 +534,19 @@ class Dashboard(App):
             return
 
         def handle_result(path: str | None) -> None:
-            if path:
-                self.open_request = {
-                    "session_id": None,
-                    "cwd": path,
-                    "config_dir": config_dir or "",
-                }
-                self.exit()
+            if not path:
+                return
+            error = spawn_new_terminal_window(path, config_dir or "", None)
+            if error:
+                self.notify(f"Couldn't open a new window: {error}", severity="error")
+            else:
+                self.notify(f"Opened a new session for {account} in a new Terminal window")
 
         self.push_screen(NewSessionScreen(account, default_dir=os.getcwd()), handle_result)
 
 
 def main():
-    app = Dashboard()
-    app.run()
-
-    request = app.open_request
-    if request is None:
-        return
-
-    try:
-        os.chdir(request["cwd"])
-    except OSError as e:
-        print(f"cc-session-hub: couldn't open {request['cwd']}: {e}")
-        return
-
-    env = os.environ.copy()
-    if request["config_dir"]:
-        env["CLAUDE_CONFIG_DIR"] = request["config_dir"]
-    else:
-        env.pop("CLAUDE_CONFIG_DIR", None)
-
-    argv = ["claude"]
-    if request.get("session_id"):
-        argv += ["--resume", request["session_id"]]
-
-    try:
-        os.execvpe("claude", argv, env)
-    except OSError as e:
-        print(f"cc-session-hub: couldn't launch claude: {e}")
+    Dashboard().run()
 
 
 if __name__ == "__main__":
