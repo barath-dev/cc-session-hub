@@ -9,6 +9,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Vertical
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.suggester import Suggester
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
 HUB_HTTP = os.environ.get("CC_HUB_HTTP", "http://127.0.0.1:8765")
@@ -130,6 +131,39 @@ class ConfirmScreen(ModalScreen[bool]):
             self.dismiss(False)
 
 
+class PathSuggester(Suggester):
+    """Completes directory paths as you type, filesystem-backed, dirs only."""
+
+    def __init__(self):
+        super().__init__(use_cache=False, case_sensitive=True)
+
+    async def get_suggestion(self, value: str) -> str | None:
+        if not value:
+            return None
+
+        expanded = os.path.expanduser(value)
+        if expanded.endswith(os.sep):
+            dir_part, prefix = expanded, ""
+        else:
+            dir_part, prefix = os.path.split(expanded)
+            dir_part = dir_part or "."
+
+        try:
+            entries = sorted(os.listdir(dir_part))
+        except OSError:
+            return None
+
+        matches = [
+            e for e in entries
+            if e.startswith(prefix) and os.path.isdir(os.path.join(dir_part, e))
+        ]
+        if not matches:
+            return None
+
+        original_prefix = value if not prefix else value[: len(value) - len(prefix)]
+        return original_prefix + matches[0] + os.sep
+
+
 class NewSessionScreen(ModalScreen[str | None]):
     """Prompts for a directory, dismissed with the resolved absolute path or None."""
 
@@ -162,9 +196,9 @@ class NewSessionScreen(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Container(id="new-box"):
             yield Static(f"New session for [b]{self.account}[/b] — directory:")
-            yield Input(value=self.default_dir, id="dir-input")
+            yield Input(value=self.default_dir, id="dir-input", suggester=PathSuggester())
             yield Static("", id="new-error")
-            yield Static("Enter to start, Esc to cancel", id="new-hint")
+            yield Static("Enter to start, → to accept suggestion, Esc to cancel", id="new-hint")
 
     def on_mount(self) -> None:
         self.query_one("#dir-input", Input).focus()
