@@ -45,6 +45,7 @@ def read_account_usage() -> list[dict]:
         if not cached:
             rows.append({
                 "account": account,
+                "config_dir": config_dir,
                 "five_hour_pct": None,
                 "five_hour_resets_at": None,
                 "seven_day_pct": None,
@@ -59,6 +60,7 @@ def read_account_usage() -> list[dict]:
 
         rows.append({
             "account": account,
+            "config_dir": config_dir,
             "five_hour_pct": _pct(five_hour),
             "five_hour_resets_at": (five_hour or {}).get("resets_at"),
             "seven_day_pct": _pct(seven_day),

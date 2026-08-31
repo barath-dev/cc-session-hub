@@ -9,7 +9,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Vertical
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.widgets import DataTable, Footer, Header, Input, Static
 
 HUB_HTTP = os.environ.get("CC_HUB_HTTP", "http://127.0.0.1:8765")
 HUB_WS = os.environ.get("CC_HUB_WS", "ws://127.0.0.1:8765/ws")
@@ -130,6 +130,57 @@ class ConfirmScreen(ModalScreen[bool]):
             self.dismiss(False)
 
 
+class NewSessionScreen(ModalScreen[str | None]):
+    """Prompts for a directory, dismissed with the resolved absolute path or None."""
+
+    CSS = """
+    NewSessionScreen {
+        align: center middle;
+    }
+    #new-box {
+        width: 70;
+        height: auto;
+        border: solid $accent;
+        padding: 1 2;
+        background: $panel;
+    }
+    #new-error {
+        color: $error;
+        margin-top: 1;
+    }
+    #new-hint {
+        color: $text-muted;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, account: str, default_dir: str):
+        super().__init__()
+        self.account = account
+        self.default_dir = default_dir
+
+    def compose(self) -> ComposeResult:
+        with Container(id="new-box"):
+            yield Static(f"New session for [b]{self.account}[/b] — directory:")
+            yield Input(value=self.default_dir, id="dir-input")
+            yield Static("", id="new-error")
+            yield Static("Enter to start, Esc to cancel", id="new-hint")
+
+    def on_mount(self) -> None:
+        self.query_one("#dir-input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        path = os.path.expanduser(event.value.strip())
+        if not path or not os.path.isdir(path):
+            self.query_one("#new-error", Static).update(f"No such directory: {path or '(empty)'}")
+            return
+        self.dismiss(os.path.abspath(path))
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
+
 class Dashboard(App):
     CSS = """
     #usage {
@@ -142,7 +193,11 @@ class Dashboard(App):
         padding: 0 1;
     }
     """
-    BINDINGS = [("q", "quit", "Quit"), ("o", "open_session", "Open")]
+    BINDINGS = [
+        ("q", "quit", "Quit"),
+        ("o", "open_session", "Open"),
+        ("n", "new_session", "New"),
+    ]
 
     connection_status = reactive("connecting...")
 
@@ -153,6 +208,7 @@ class Dashboard(App):
         self.usage_accounts: dict[str, dict] = {}
         self.usage_row_keys: dict[str, object] = {}
         self.selected_session_id: str | None = None
+        self.selected_account: str | None = None
         self.open_request: dict | None = None
 
     def compose(self) -> ComposeResult:
@@ -289,8 +345,28 @@ class Dashboard(App):
             )
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        if event.data_table.id == "table" and event.row_key is not None:
+        if event.row_key is None:
+            return
+        if event.data_table.id == "table":
             self.selected_session_id = event.row_key.value
+        elif event.data_table.id == "usage":
+            self.selected_account = event.row_key.value
+
+    def _focused_account(self) -> tuple[str | None, str | None]:
+        """Which account 'n' should act on: the highlighted usage row if that
+        table has focus, otherwise the account of the highlighted session."""
+        focused = self.focused
+        if isinstance(focused, DataTable) and focused.id == "usage" and self.selected_account:
+            row = self.usage_accounts.get(self.selected_account)
+            return self.selected_account, (row or {}).get("config_dir")
+        if self.selected_session_id:
+            row = self.sessions.get(self.selected_session_id)
+            if row:
+                return row.get("account"), row.get("config_dir")
+        if self.selected_account:
+            row = self.usage_accounts.get(self.selected_account)
+            return self.selected_account, (row or {}).get("config_dir")
+        return None, None
 
     def action_open_session(self) -> None:
         session_id = self.selected_session_id
@@ -325,6 +401,23 @@ class Dashboard(App):
         else:
             proceed()
 
+    def action_new_session(self) -> None:
+        account, config_dir = self._focused_account()
+        if not account:
+            self.notify("Highlight an account or session first", severity="warning")
+            return
+
+        def handle_result(path: str | None) -> None:
+            if path:
+                self.open_request = {
+                    "session_id": None,
+                    "cwd": path,
+                    "config_dir": config_dir or "",
+                }
+                self.exit()
+
+        self.push_screen(NewSessionScreen(account, default_dir=os.getcwd()), handle_result)
+
 
 def main():
     app = Dashboard()
@@ -346,8 +439,12 @@ def main():
     else:
         env.pop("CLAUDE_CONFIG_DIR", None)
 
+    argv = ["claude"]
+    if request.get("session_id"):
+        argv += ["--resume", request["session_id"]]
+
     try:
-        os.execvpe("claude", ["claude", "--resume", request["session_id"]], env)
+        os.execvpe("claude", argv, env)
     except OSError as e:
         print(f"cc-session-hub: couldn't launch claude: {e}")
 

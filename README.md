@@ -105,6 +105,13 @@ another window), you'll get a confirmation prompt first — `y` to proceed anywa
 cancel — since a second process reading/appending the same transcript can conflict with one
 that's still active.
 
+Press `n` to start a **new** session for an account instead of resuming an old one. It acts
+on whichever account is highlighted in the top (usage) panel — or, if you're focused on the
+sessions table instead, the account of the highlighted session — and asks for a directory
+(defaults to wherever you launched the dashboard from). Same terminal-takeover mechanism as
+`o`, just without `--resume`: a fresh `claude` process starts in that directory under that
+account's `$CLAUDE_CONFIG_DIR`.
+
 Or use `./open.sh`, which starts the hub automatically if it isn't already running and
 then opens the dashboard — handy to alias (e.g. `alias cc-dashboard="~/tools/cc-session-hub/open.sh"`)
 so you can just type one command.
