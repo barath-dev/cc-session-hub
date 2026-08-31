@@ -18,13 +18,33 @@ from textual.widgets import DataTable, Footer, Header, Input, OptionList, Static
 HUB_HTTP = os.environ.get("CC_HUB_HTTP", "http://127.0.0.1:8765")
 HUB_WS = os.environ.get("CC_HUB_WS", "ws://127.0.0.1:8765/ws")
 
-STATE_STYLE = {
-    "starting": "cyan",
-    "working": "bold blue",
-    "idle": "grey62",
-    "needs_attention": "bold yellow",
-    "ended": "dim strike",
+# Palette: warm phosphor-amber terminal, not the generic near-black+neon look.
+# Named tokens used consistently everywhere instead of ad hoc color names.
+INK = "#14110D"       # background
+PANEL = "#1C1712"     # panel/table surface, one step up from INK
+HIGHLIGHT = "#332A1D" # cursor row - lighter than PANEL, but neutral so
+                       # per-cell semantic colors (bars, state) stay legible
+PAPER = "#EAE3D8"     # primary text
+SLATE = "#8A8378"     # muted/idle text
+DIM = "#55504A"       # borders, disabled/very-quiet text
+AMBER = "#E7A33E"     # primary accent - activity, focus, brand
+ALERT = "#E2604B"     # needs-attention / high usage, used sparingly
+SAGE = "#8FB88A"      # healthy / low usage
+
+STATE_META = {
+    "starting": ("◌", AMBER, "starting"),
+    "working": ("●", AMBER, "working"),
+    "idle": ("○", SLATE, "idle"),
+    "needs_attention": ("▲", ALERT, "attention"),
+    "ended": ("·", DIM, "ended"),
 }
+
+
+def render_state(state: str | None, pulse_on: bool = False) -> str:
+    glyph, color, label = STATE_META.get(state, ("?", SLATE, state or "?"))
+    if state == "working" and pulse_on:
+        glyph = "◉"
+    return f"[{color}]{glyph} {label}[/{color}]"
 
 
 def _relative_from_dt(then: datetime) -> str:
@@ -54,30 +74,33 @@ STALE_AFTER_SECONDS = 600
 
 def format_updated(fetched_at_ms: int | None) -> str:
     if not fetched_at_ms:
-        return "[grey50]never[/grey50]"
+        return f"[{DIM}]never[/{DIM}]"
     then = datetime.fromtimestamp(fetched_at_ms / 1000, tz=timezone.utc)
     text = _relative_from_dt(then)
     age = (datetime.now(timezone.utc) - then).total_seconds()
     if age > STALE_AFTER_SECONDS:
-        return f"[grey50]{text} (stale)[/grey50]"
+        return f"[{DIM}]{text} (stale)[/{DIM}]"
     return text
 
 
-def pct_style(pct: int | None) -> str:
-    if pct is None:
-        return "grey62"
+BAR_WIDTH = 10
+
+
+def pct_color(pct: int) -> str:
     if pct >= 80:
-        return "bold red"
+        return ALERT
     if pct >= 50:
-        return "bold yellow"
-    return "bold green"
+        return AMBER
+    return SAGE
 
 
 def format_pct(pct: int | None) -> str:
     if pct is None:
-        return "-"
-    style = pct_style(pct)
-    return f"[{style}]{pct}%[/{style}]"
+        return f"[{DIM}]{'░' * BAR_WIDTH} –[/{DIM}]"
+    color = pct_color(pct)
+    filled = round(BAR_WIDTH * min(pct, 100) / 100)
+    bar = "█" * filled + "░" * (BAR_WIDTH - filled)
+    return f"[{color}]{bar} {pct}%[/{color}]"
 
 
 def format_resets_in(iso_ts: str | None) -> str:
@@ -130,21 +153,23 @@ def spawn_new_terminal_window(cwd: str, config_dir: str, session_id: str | None)
 class ConfirmScreen(ModalScreen[bool]):
     """Yes/no confirmation, dismissed with the chosen bool."""
 
-    CSS = """
-    ConfirmScreen {
+    CSS = f"""
+    ConfirmScreen {{
         align: center middle;
-    }
-    #confirm-box {
+        background: {INK} 60%;
+    }}
+    #confirm-box {{
         width: 64;
         height: auto;
-        border: solid $warning;
+        border: heavy {ALERT};
         padding: 1 2;
-        background: $panel;
-    }
-    #confirm-hint {
-        color: $text-muted;
+        background: {PANEL};
+        color: {PAPER};
+    }}
+    #confirm-hint {{
+        color: {SLATE};
         margin-top: 1;
-    }
+    }}
     """
 
     def __init__(self, message: str):
@@ -154,7 +179,10 @@ class ConfirmScreen(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         with Container(id="confirm-box"):
             yield Static(self.message)
-            yield Static("y to confirm, n / Esc to cancel", id="confirm-hint")
+            yield Static(f"[{AMBER}]y[/{AMBER}] to confirm   [{AMBER}]n[/{AMBER}] / Esc to cancel", id="confirm-hint")
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm-box").border_title = "confirm"
 
     def on_key(self, event) -> None:
         if event.key == "y":
@@ -209,30 +237,46 @@ class PathSuggester(Suggester):
 class NewSessionScreen(ModalScreen[str | None]):
     """Prompts for a directory, dismissed with the resolved absolute path or None."""
 
-    CSS = """
-    NewSessionScreen {
+    CSS = f"""
+    NewSessionScreen {{
         align: center middle;
-    }
-    #new-box {
+        background: {INK} 60%;
+    }}
+    #new-box {{
         width: 70;
         height: auto;
-        border: solid $accent;
+        border: heavy {AMBER};
         padding: 1 2;
-        background: $panel;
-    }
-    #dir-options {
-        max-height: 8;
+        background: {PANEL};
+        color: {PAPER};
+    }}
+    #dir-input {{
+        border: round {DIM};
+    }}
+    #dir-input:focus {{
+        border: round {AMBER};
+    }}
+    #dir-input > .input--suggestion {{
+        color: {SLATE};
+        text-style: italic;
+    }}
+    #dir-options {{
+        max-height: 5;
         margin-top: 1;
-        border: solid $accent;
-    }
-    #new-error {
-        color: $error;
+        border: round {DIM};
+        background: {INK};
+    }}
+    #dir-options:focus {{
+        border: round {AMBER};
+    }}
+    #new-error {{
+        color: {ALERT};
         margin-top: 1;
-    }
-    #new-hint {
-        color: $text-muted;
+    }}
+    #new-hint {{
+        color: {SLATE};
         margin-top: 1;
-    }
+    }}
     """
 
     def __init__(self, account: str, default_dir: str):
@@ -242,13 +286,18 @@ class NewSessionScreen(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Container(id="new-box"):
-            yield Static(f"New session for [b]{self.account}[/b] — directory:")
+            yield Static(f"new session — [{AMBER}]{self.account}[/{AMBER}]")
             yield Input(value=self.default_dir, id="dir-input", suggester=PathSuggester())
             yield OptionList(id="dir-options")
             yield Static("", id="new-error")
-            yield Static("Enter to start, Tab to complete, ↓ to browse matches, Esc to cancel", id="new-hint")
+            yield Static(
+                f"[{AMBER}]enter[/{AMBER}] start   [{AMBER}]tab[/{AMBER}] complete   "
+                f"[{AMBER}]↓[/{AMBER}] browse   [{AMBER}]esc[/{AMBER}] cancel",
+                id="new-hint",
+            )
 
     def on_mount(self) -> None:
+        self.query_one("#new-box").border_title = "new session"
         self.query_one("#dir-options", OptionList).display = False
         self.query_one("#dir-input", Input).focus()
 
@@ -310,16 +359,59 @@ class NewSessionScreen(ModalScreen[str | None]):
 
 
 class Dashboard(App):
-    CSS = """
-    #usage {
-        height: 6;
-        border: solid $accent;
-    }
-    #detail {
+    ENABLE_COMMAND_PALETTE = False
+
+    CSS = f"""
+    Screen {{
+        background: {INK};
+        color: {PAPER};
+    }}
+    Header {{
+        background: {INK};
+        color: {AMBER};
+        text-style: bold;
+    }}
+    Footer {{
+        background: {INK};
+        color: {SLATE};
+    }}
+    Footer > .footer-key--key {{
+        color: {AMBER};
+        text-style: bold;
+    }}
+    #usage {{
+        height: 7;
+        border: heavy {AMBER};
+        background: {PANEL};
+    }}
+    #usage > .datatable--header {{
+        background: {PANEL};
+        color: {AMBER};
+        text-style: bold;
+    }}
+    #table {{
+        border: heavy {DIM};
+        background: {PANEL};
+    }}
+    #table > .datatable--header {{
+        background: {PANEL};
+        color: {SLATE};
+        text-style: bold;
+    }}
+    DataTable > .datatable--cursor {{
+        background: {HIGHLIGHT};
+        text-style: bold;
+    }}
+    DataTable > .datatable--odd-row {{
+        background: {INK};
+    }}
+    #detail {{
         height: 5;
-        border: solid $accent;
+        border: round {DIM};
         padding: 0 1;
-    }
+        background: {PANEL};
+        color: {SLATE};
+    }}
     """
     BINDINGS = [
         ("q", "quit", "Quit"),
@@ -337,23 +429,31 @@ class Dashboard(App):
         self.usage_row_keys: dict[str, object] = {}
         self.selected_session_id: str | None = None
         self.selected_account: str | None = None
+        self._pulse_on = False
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical():
-            yield DataTable(id="usage")
-            yield DataTable(id="table")
-            yield Static("Select a row for details", id="detail")
+            yield DataTable(id="usage", zebra_stripes=True)
+            yield DataTable(id="table", zebra_stripes=True)
+            yield Static("select a row for details", id="detail")
         yield Footer()
 
     def on_mount(self) -> None:
+        self.title = "cc-session-hub"
+        self.sub_title = "connecting…"
+
         usage_table = self.query_one("#usage", DataTable)
         usage_table.cursor_type = "row"
+        usage_table.border_title = "accounts"
         usage_table.add_columns("Account", "5h used", "5h resets", "7d used", "7d resets", "Updated")
 
         table = self.query_one("#table", DataTable)
         table.cursor_type = "row"
+        table.border_title = "sessions"
         table.add_columns("Account", "Project", "State", "Notice", "Tool", "Last update")
+
+        self.query_one("#detail", Static).border_title = "detail"
 
         self.set_interval(1.0, self.refresh_times)
         self.run_worker(self.stream_updates(), exclusive=True)
@@ -380,7 +480,7 @@ class Dashboard(App):
                 try:
                     self.connection_status = "connected"
                     async with http.ws_connect(HUB_WS) as ws:
-                        self.sub_title = "connected"
+                        self.sub_title = "● live"
                         async for msg in ws:
                             if msg.type == aiohttp.WSMsgType.TEXT:
                                 data = msg.json()
@@ -390,7 +490,7 @@ class Dashboard(App):
                                     for row in data["accounts"]:
                                         self.upsert_usage_row(row)
                 except Exception:
-                    self.sub_title = "reconnecting..."
+                    self.sub_title = "○ reconnecting…"
                     await self.sleep(2)
 
     async def sleep(self, seconds: float) -> None:
@@ -403,12 +503,10 @@ class Dashboard(App):
         self.sessions[session_id] = row
         table = self.query_one("#table", DataTable)
 
-        state = row.get("state") or "?"
-        style = STATE_STYLE.get(state, "white")
         cells = (
             row.get("account") or "-",
             row.get("project") or "-",
-            f"[{style}]{state}[/{style}]",
+            render_state(row.get("state"), self._pulse_on),
             row.get("notification_type") or "-",
             row.get("current_tool") or "-",
             relative_time(row.get("updated_at")),
@@ -421,6 +519,7 @@ class Dashboard(App):
         else:
             key = table.add_row(*cells, key=session_id)
             self.row_keys[session_id] = key
+        table.border_subtitle = f"{len(self.row_keys)} tracked"
 
     def upsert_usage_row(self, row: dict) -> None:
         account = row["account"]
@@ -441,14 +540,20 @@ class Dashboard(App):
         else:
             key = table.add_row(*cells, key=account)
             self.usage_row_keys[account] = key
+        table.border_subtitle = f"{len(self.usage_row_keys)} accounts"
 
     def refresh_times(self) -> None:
+        self._pulse_on = not self._pulse_on
+
         table = self.query_one("#table", DataTable)
-        last_col = list(table.columns)[-1]
+        cols = list(table.columns)
+        state_col, last_col = cols[2], cols[-1]
         for session_id, row in self.sessions.items():
             key = self.row_keys.get(session_id)
             if key is not None:
                 table.update_cell(key, last_col, relative_time(row.get("updated_at")))
+                if row.get("state") == "working":
+                    table.update_cell(key, state_col, render_state("working", self._pulse_on))
 
         usage_table = self.query_one("#usage", DataTable)
         cols = list(usage_table.columns)
@@ -466,9 +571,9 @@ class Dashboard(App):
         detail = self.query_one("#detail", Static)
         if row:
             detail.update(
-                f"session: {session_id}\n"
-                f"cwd: {row.get('cwd', '-')}\n"
-                f"last message: {row.get('last_message') or '-'}"
+                f"[{SLATE}]session[/{SLATE}] {session_id}\n"
+                f"[{SLATE}]cwd[/{SLATE}]     {row.get('cwd', '-')}\n"
+                f"[{SLATE}]last[/{SLATE}]    {row.get('last_message') or '-'}"
             )
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:

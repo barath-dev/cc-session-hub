@@ -7,6 +7,11 @@ own status to a local hub via hooks; a terminal dashboard shows all of them live
 Read-only monitoring only — nothing reaches into another session's private state.
 Every session only ever pushes its own status out.
 
+The dashboard uses its own warm amber-on-charcoal look rather than Textual's defaults —
+glyph state indicators (`◌`/`●`/`○`/`▲`/`·`, with a subtle pulse on `working` rows) and real
+usage bars (`████░░░░░░ 37%`) instead of bare percentages, each labeled panel bordered and
+titled (`accounts` / `sessions` / `detail`).
+
 ## How it works
 
 - `hub.py` runs a small `aiohttp` server on `127.0.0.1:8765` (localhost only) with a
