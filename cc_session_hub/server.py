@@ -50,6 +50,7 @@ def build_row(payload: dict) -> dict:
         "project": cwd.rstrip("/").split("/")[-1] if cwd else None,
         "state": STATE_BY_EVENT.get(event),
         "updated_at": now_iso(),
+        "config_dir": payload.get("config_dir", ""),
     }
 
     if event == "SessionStart":

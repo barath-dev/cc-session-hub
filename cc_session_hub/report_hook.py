@@ -43,6 +43,7 @@ def main() -> int:
         return 0
 
     payload["account"] = resolve_account()
+    payload["config_dir"] = os.environ.get("CLAUDE_CONFIG_DIR", "")
 
     try:
         body = json.dumps(payload).encode("utf-8")

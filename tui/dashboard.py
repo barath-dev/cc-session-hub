@@ -6,8 +6,9 @@ from datetime import datetime, timezone
 
 import aiohttp
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
+from textual.containers import Container, Vertical
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Static
 
 HUB_HTTP = os.environ.get("CC_HUB_HTTP", "http://127.0.0.1:8765")
@@ -93,6 +94,42 @@ def format_resets_in(iso_ts: str | None) -> str:
     return f"in {minutes}m"
 
 
+class ConfirmScreen(ModalScreen[bool]):
+    """Yes/no confirmation, dismissed with the chosen bool."""
+
+    CSS = """
+    ConfirmScreen {
+        align: center middle;
+    }
+    #confirm-box {
+        width: 64;
+        height: auto;
+        border: solid $warning;
+        padding: 1 2;
+        background: $panel;
+    }
+    #confirm-hint {
+        color: $text-muted;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, message: str):
+        super().__init__()
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        with Container(id="confirm-box"):
+            yield Static(self.message)
+            yield Static("y to confirm, n / Esc to cancel", id="confirm-hint")
+
+    def on_key(self, event) -> None:
+        if event.key == "y":
+            self.dismiss(True)
+        elif event.key in ("n", "escape"):
+            self.dismiss(False)
+
+
 class Dashboard(App):
     CSS = """
     #usage {
@@ -105,7 +142,7 @@ class Dashboard(App):
         padding: 0 1;
     }
     """
-    BINDINGS = [("q", "quit", "Quit")]
+    BINDINGS = [("q", "quit", "Quit"), ("o", "open_session", "Open")]
 
     connection_status = reactive("connecting...")
 
@@ -115,6 +152,8 @@ class Dashboard(App):
         self.row_keys: dict[str, object] = {}
         self.usage_accounts: dict[str, dict] = {}
         self.usage_row_keys: dict[str, object] = {}
+        self.selected_session_id: str | None = None
+        self.open_request: dict | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -249,9 +288,68 @@ class Dashboard(App):
                 f"last message: {row.get('last_message') or '-'}"
             )
 
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id == "table" and event.row_key is not None:
+            self.selected_session_id = event.row_key.value
+
+    def action_open_session(self) -> None:
+        session_id = self.selected_session_id
+        if not session_id:
+            return
+        row = self.sessions.get(session_id)
+        if not row or not row.get("cwd"):
+            self.notify("No directory known for this session", severity="warning")
+            return
+
+        def proceed() -> None:
+            self.open_request = {
+                "session_id": session_id,
+                "cwd": row["cwd"],
+                "config_dir": row.get("config_dir") or "",
+            }
+            self.exit()
+
+        if row.get("state") != "ended":
+            def handle_result(confirmed: bool | None) -> None:
+                if confirmed:
+                    proceed()
+
+            self.push_screen(
+                ConfirmScreen(
+                    f"Session in {row.get('project') or row['cwd']} looks still active "
+                    f"(state: {row.get('state')}).\n"
+                    "Resuming here may conflict with the live session."
+                ),
+                handle_result,
+            )
+        else:
+            proceed()
+
 
 def main():
-    Dashboard().run()
+    app = Dashboard()
+    app.run()
+
+    request = app.open_request
+    if request is None:
+        return
+
+    try:
+        os.chdir(request["cwd"])
+    except OSError as e:
+        print(f"cc-session-hub: couldn't open {request['cwd']}: {e}")
+        return
+
+    env = os.environ.copy()
+    if request["config_dir"]:
+        env["CLAUDE_CONFIG_DIR"] = request["config_dir"]
+    else:
+        env.pop("CLAUDE_CONFIG_DIR", None)
+
+    try:
+        os.execvpe("claude", ["claude", "--resume", request["session_id"]], env)
+    except OSError as e:
+        print(f"cc-session-hub: couldn't launch claude: {e}")
 
 
 if __name__ == "__main__":

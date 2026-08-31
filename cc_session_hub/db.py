@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     session_start_reason TEXT,
     started_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    ended_at TEXT
+    ended_at TEXT,
+    config_dir TEXT
 );
 """
 
@@ -27,6 +28,12 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute(SCHEMA)
+
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+    if "config_dir" not in existing_cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN config_dir TEXT")
+        conn.commit()
+
     return conn
 
 
@@ -49,15 +56,17 @@ def upsert_session(conn: sqlite3.Connection, row: dict) -> dict:
             "started_at": row["updated_at"],
             "updated_at": row["updated_at"],
             "ended_at": row.get("ended_at"),
+            "config_dir": row.get("config_dir"),
         }
         conn.execute(
             """INSERT INTO sessions
                (session_id, account, cwd, project, state, notification_type,
                 current_tool, last_message, session_start_reason, started_at,
-                updated_at, ended_at)
+                updated_at, ended_at, config_dir)
                VALUES (:session_id, :account, :cwd, :project, :state,
                        :notification_type, :current_tool, :last_message,
-                       :session_start_reason, :started_at, :updated_at, :ended_at)""",
+                       :session_start_reason, :started_at, :updated_at, :ended_at,
+                       :config_dir)""",
             merged,
         )
     else:
@@ -72,6 +81,7 @@ def upsert_session(conn: sqlite3.Connection, row: dict) -> dict:
             "last_message",
             "session_start_reason",
             "ended_at",
+            "config_dir",
         ):
             # A key's mere presence in `row` means "set this field" (even to
             # None, to explicitly clear it) — absence means "leave as-is".
@@ -83,7 +93,7 @@ def upsert_session(conn: sqlite3.Connection, row: dict) -> dict:
                account=:account, cwd=:cwd, project=:project, state=:state,
                notification_type=:notification_type, current_tool=:current_tool,
                last_message=:last_message, session_start_reason=:session_start_reason,
-               updated_at=:updated_at, ended_at=:ended_at
+               updated_at=:updated_at, ended_at=:ended_at, config_dir=:config_dir
                WHERE session_id=:session_id""",
             merged,
         )

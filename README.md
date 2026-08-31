@@ -96,7 +96,14 @@ is low-frequency).
 .venv/bin/python tui/dashboard.py
 ```
 
-Press `q` to quit.
+Press `q` to quit. Press `o` to **open** the highlighted session: the dashboard exits and
+the same terminal is redirected into `claude --resume <session_id>` for that session, `cd`'d
+into its directory and using its original account's `$CLAUDE_CONFIG_DIR` — it fully replaces
+the dashboard process, so the terminal that was running the TUI becomes that Claude Code
+session. If the session's last known state isn't `ended` (it might still be running live in
+another window), you'll get a confirmation prompt first — `y` to proceed anyway, `n`/Esc to
+cancel — since a second process reading/appending the same transcript can conflict with one
+that's still active.
 
 Or use `./open.sh`, which starts the hub automatically if it isn't already running and
 then opens the dashboard — handy to alias (e.g. `alias cc-dashboard="~/tools/cc-session-hub/open.sh"`)
